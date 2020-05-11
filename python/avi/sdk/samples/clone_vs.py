@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.ERROR)
 
 urllib3.disable_warnings()
 
-AVICLONE_VERSION = [1, 2, 0]
+AVICLONE_VERSION = [1, 3, 0]
 
 # Try to obtain the terminal width to allow spprint() to wrap output neatly.
 # If unable to determine, assume terminal width is 70 characters
@@ -75,7 +75,10 @@ class AviClone:
             'http_profile/compression_profile/compressible_content_ref',
         'appprofile-compressibleipaddrgroup': 'ip_addrs_ref',
         'appprofile-compressibledevices': 'devices_ref'}
-    VALID_WAFPOLICY_REF_OBJECTS = {'waf-profile': 'waf_profile_ref'}
+    VALID_WAFPOLICY_REF_OBJECTS = {'waf-profile': 'waf_profile_ref',
+                                   'waf-crs': 'waf_crs_ref',
+                                   'positive-security-model':
+                                       'positive_security_model/group_refs'}
     VALID_SSLCERT_REF_OBJECTS = {
         'ssl-certmgmt': 'certificate_management_profile_ref',
         'ssl-hsmgroup': 'hardwaresecuritymodulegroup_ref'}
@@ -341,6 +344,7 @@ class AviClone:
         # Remove unique attributes and rename object
 
         old_obj.pop('uuid', None)
+        old_obj.pop('_last_modified', None)
         old_obj_url = old_obj.pop('url', None)
         old_obj['name'] = new_name
 
@@ -401,6 +405,11 @@ class AviClone:
                  warnings) = self._process_certificatemanagementprofile(
                     cm_obj=old_obj, t_obj=t_obj, ot_obj=ot_obj,
                     oc_obj=oc_obj, force_clone=force_clone)
+            elif object_type == 'analyticsprofile':
+                if '18.2.6' <= self.dest_api.api_version <= '18.2.8':
+                    # Workaround for issue in certain releases where
+                    # hs_security_tls13_score is read-only - AV-84655
+                    old_obj.pop('hs_security_tls13_score', None)
 
             # Try to create cloned object (possibly in a different tenant to
             # the source object)
@@ -418,16 +427,18 @@ class AviClone:
                                     (' in tenant "%s"' % other_tenant)
                                     if other_tenant else '')]
                 logger.debug('Created %s "%s"', object_type, new_obj['url'])
+
                 if old_obj_url:
                     self.clone_track[old_obj_url] = new_obj['url']
                 return new_obj, created_objs, warnings
-            else:
-                exception_string = ('Unable to clone %s "%s" as "%s" (%d:%s)'
-                                    % (object_type, old_name,
-                                       new_name, r.status_code, r.text))
-                logger.debug(exception_string)
-                logger.debug(old_obj)
-                raise Exception(exception_string)
+
+            # API error occurred with POST
+            exception_string = ('Unable to clone %s "%s" as "%s" (%d:%s)'
+                                % (object_type, old_name,
+                                  new_name, r.status_code, r.text))
+            logger.debug(exception_string)
+            logger.debug(old_obj)
+            raise Exception(exception_string)
 
         except Exception as ex:
             # If an exception occurred, delete any intermediate objects we
@@ -495,7 +506,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -547,7 +559,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -586,7 +599,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -617,7 +631,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -648,7 +663,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -709,11 +725,47 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
         return created_objs, warnings
+
+    def _process_wafpolicy(self, wp_obj, t_obj, ot_obj, oc_obj,
+                               force_clone):
+        """
+        Performs ssopolicy-specific manipulations on the cloned
+        object
+        """
+
+        logger.debug('Running _process_wafpolicy')
+
+        created_objs = []
+        warnings = []
+
+        try:
+            valid_ref_objects = self.VALID_WAFPOLICY_REF_OBJECTS
+
+            # Process generic references, re-using or cloning referenced
+            # objects as necessary
+
+            created_objs, warnings = self._process_refs(parent_obj=wp_obj,
+                                          refs=valid_ref_objects,
+                                          t_obj=t_obj, ot_obj=ot_obj,
+                                          oc_obj=oc_obj,
+                                          force_clone=force_clone)
+
+        except Exception as ex:
+            # If an exception occurred, delete any intermediate objects we
+            # have created
+
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
+
+            raise
+
+        return created_objs, warnings#, update_data
 
     def _process_sslkeyandcertificate(self, ss_obj, t_obj, ot_obj, oc_obj,
                                       force_clone):
@@ -750,7 +802,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -784,7 +837,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -905,7 +959,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -1001,7 +1056,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -1072,7 +1128,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -1121,7 +1178,8 @@ class AviClone:
             # If an exception occurred, delete any intermediate objects we
             # have created
 
-            self._delete_created_objs(created_objs, ot_obj['uuid'])
+            self._delete_created_objs(created_objs, (ot_obj['uuid']
+                                                     if ot_obj else None))
 
             raise
 
@@ -1444,6 +1502,7 @@ class AviClone:
                                 tenant_uuid=tenant_uuid).json()
 
                 vsvip_obj.pop('uuid', None)
+                vsvip_obj.pop('_last_modified', None)
                 vsvip_obj.pop('url', None)
                 vsvip_obj['name'] = new_vsvip_name
                 if oc_obj:
@@ -1693,6 +1752,7 @@ class AviClone:
             # Remove unique atributes and rename
 
             v_obj.pop('uuid', None)
+            v_obj.pop('_last_modified', None)
             v_obj_old_url = v_obj.pop('url', None)
             v_obj.pop('vip_runtime', None)
             v_obj['name'] = new_vs_name
@@ -1934,75 +1994,75 @@ if __name__ == '__main__':
         For detailed help on cloning a specific object, use for
         example:
         clone_vs.py vs -h
-        
+
         The script allows the cloning of virtual services, pools,
         pool groups and generic objects (that have no child
         references).
-        
+
         The script clones any additional objects that are required,
         so for example when cloning a virtual service, the pools
         and/or pool groups used by that VS, including any specified
         in context-switching rules, will also be cloned.
-        
+
         The script also allows the cloning of objects into a
         different tenant and/or cloud than the source - the
         destination may also be on a different Avi Vantage
         controller.
-        
+
         These advanced cloning options may not always be successful
         because the source and destination tenant/cloud/controllers
         may have different properties. If the clone attempt fails,
         the script will automatically delete any objects that it
         created along the way.
-        
+
         By default, re-usable child objects/profiles such as
         application profiles, health monitors, persistency profiles
         etc. are not cloned so that the cloned object simply refers
         to the same child objects as the original.
-        
+
         However, when cloning to a different tenant, the behaviour
         is slightly different:
-        
+
         If a re-usable object was defined in the admin tenant, it is
         available in all tenants and will not be cloned by default.
         If a re-usable objects was defined in the source tenant, the
         script will use an identically-named object in the target
         tenant if one is found. Otherwise, the object will be cloned
         to the destination.
-        
+
         This behaviour can be overridden using the "forceclone"
         option which ensures that the specified references are
         always cloned rather than re-used.
-        
+
         For example, to forcibly clone all health monitors, use the
         option:
-        
+
         --forceclone pool-healthmonitor
-        
+
         The full list of supported options is displayed in the help.
-        
+
         Examples:
-        
+
         * Cloning a VS and child objects within a tenant:
-        
+
         clone_vs.py -c controller.acme.com vs
         example cloned-example -v 10.10.10.2
-        
-        
+
+
         * Cloning a VS and child objects to a different tenant:
-        
+
         clone_vs.py -c controller.acme.com vs
         example cloned-example -t tenant1 -2t tenant2
         -v 10.10.10.2
-        
+
 
         * Cloning a VS and child objects between two Azure clouds:
-        
+
         clone_vs.py -c controller.acme.com vs
         example cloned-example -2c Azure-Cloud-USEast2
         -v 172.27.33.0/24/vip-subnet
 
-        Note: Azure subnet name (subnet_uuid) must be specified, e.g. vip-subnet 
+        Note: Azure subnet name (subnet_uuid) must be specified, e.g. vip-subnet
 
 
         * Cloning a VS and child objects to a different tenant and
@@ -2012,17 +2072,17 @@ if __name__ == '__main__':
         example cloned-example -t tenant1 -2t tenant2
         -2c Second-Cloud -v 10.10.10.0/24
 
-        
+
         * Cloning a VS but forcing health monitors and application
         profiles to be cloned rather than re-used in the cloned VS:
-        
+
         clone_vs.py -c controller.acme.com -x vs
         example cloned-example -fc pool-healthmonitor,vs-appprofile
-        
-        
+
+
         * Cloning an application profile to a different tenant on a
         different controller:
-        
+
         clone_vs.py -c controller1.acme.com -dc controller2.acme.com
         generic health-monitor cloned-health-monitor
         -t tenant1 -2t tenant2 -2c Default-Cloud
@@ -2061,7 +2121,7 @@ if __name__ == '__main__':
         software versions of the source and destination Controllers. It is also
         possible to specify the specific API version to be used with the -x
         parameter.
-        
+
         Some known limitations and caveats:
 
         * Depending on the version of Avi Vantage and configuration, it may
@@ -2069,16 +2129,16 @@ if __name__ == '__main__':
         certificates in the admin tenant. However by default, this script will
         instead clone certificates to the target tenant. This behaviour can
         be enabled with the option -flags adminssl
-        
+
         * Cloning a VS to a cloud of a different type to the source
         cloud is more likely to fail as it may reference shared
         objects which do not make sense in the destination cloud.
-    
+
         * Cloning a VS to a different tenant/cloud will try to find
         an SE group with the same name as referenced in the source
         VS but if no match is found, will place into the Default SE
         group instead.
-        
+
         * The script has been primarily written for and tested with
         Linux Server/VMWare/AWS clouds - it may not work as-is for
         other clouds.
