@@ -748,7 +748,7 @@ class Test(unittest.TestCase):
     @my_vcr.use_cassette()
 
     @pytest.mark.TCID9_99_9999_9_9
-    def test_clonevs(self):
+    def test_clone_vs(self):
         api1 = ApiSession.get_session('10.206.112.60', 'admin', 'avi123',
                                       api_version='18.2.8')
         avi_clone = AviClone(api1)
