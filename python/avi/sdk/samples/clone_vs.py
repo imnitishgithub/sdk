@@ -13,6 +13,8 @@ from requests.packages import urllib3
 
 logging.basicConfig(level=logging.ERROR)
 
+logger = logging.getLogger(__name__)
+
 # Suppress warnings (typically SSL certificate warnings) when calling the API
 
 urllib3.disable_warnings()
@@ -357,11 +359,13 @@ class AviClone:
             if object_type == 'pool':
                 created_objs, warnings = self._process_pool(
                     p_obj=old_obj, t_obj=t_obj, ot_obj=ot_obj,
-                    oc_obj=oc_obj, force_clone=force_clone)
+                    oc_obj=oc_obj, force_clone=force_clone,
+                    server_map=server_map)
             elif object_type == 'poolgroup':
                 created_objs, warnings = self._process_poolgroup(
                     pg_obj=old_obj, t_obj=t_obj, ot_obj=ot_obj,
-                    oc_obj=oc_obj, force_clone=force_clone)
+                    oc_obj=oc_obj, force_clone=force_clone,
+                    server_map=server_map)
             elif object_type == 'httppolicyset':
                 created_objs, warnings = self._process_httppolicyset(
                     ps_obj=old_obj, t_obj=t_obj, ot_obj=ot_obj,
@@ -449,7 +453,8 @@ class AviClone:
             raise Exception('%s\r\n=> Unable to clone %s "%s" as "%s"'
                             % (ex, object_type, old_name, new_name))
 
-    def _process_pool(self, p_obj, t_obj, ot_obj, oc_obj, force_clone):
+    def _process_pool(self, p_obj, t_obj, ot_obj, oc_obj,
+                      force_clone, server_map=None):
         """
         Performs pool-specific manipulations on the cloned object
         """
@@ -513,7 +518,8 @@ class AviClone:
 
         return created_objs, warnings
 
-    def _process_poolgroup(self, pg_obj, t_obj, ot_obj, oc_obj, force_clone):
+    def _process_poolgroup(self, pg_obj, t_obj, ot_obj, oc_obj, force_clone,
+                           server_map=None):
         """
         Performs poolgroup-specific manipulations on the cloned object, such
         as cloning the poolgroup members
@@ -2311,8 +2317,6 @@ if __name__ == '__main__':
 
         # If not specified on the command-line, prompt the user for the
         # controller IP address and/or password
-
-        logger = logging.getLogger('clonevs')
 
         if args.debug:
             logger.setLevel(logging.DEBUG)
